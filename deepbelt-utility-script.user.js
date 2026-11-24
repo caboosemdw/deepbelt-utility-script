@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deepbelt Inventory Exporter
 // @namespace    https://deepbelt.com/
-// @version      1.6.0
+// @version      1.7.0
 // @description  Copy Deepbelt inventory and researched skill levels as JSON.
 // @match        https://staging.deepbelt.com/*
 // @match        https://www.deepbelt.com/*
@@ -88,9 +88,29 @@
   }
 
   function skillLevel(row) {
-    const label = row.querySelector(".pips[aria-label]")?.getAttribute("aria-label") || "";
-    const match = label.match(/^Level\s+(\d+)\s+of\s+(\d+)$/i);
-    return match ? { level: Number(match[1]), maxLevel: Number(match[2]) } : null;
+    const pips = row.querySelector(".pips");
+    const labels = [
+      pips?.getAttribute("aria-label"),
+      pips?.getAttribute("title"),
+      row.getAttribute("aria-label"),
+      row.getAttribute("title"),
+      textOf(pips),
+    ];
+    for (const label of labels) {
+      const match = (label || "").match(/Level\s+(\d+)\s+of\s+(\d+)/i);
+      if (match) return { level: Number(match[1]), maxLevel: Number(match[2]) };
+    }
+
+    // Some game UI builds omit the accessible label but still render the level
+    // as lit/dark pip elements, as in the Skills window's visual indicator.
+    const pipNodes = [...(pips?.querySelectorAll(".pip") || [])];
+    if (pipNodes.length) {
+      return {
+        level: pipNodes.filter((pip) => pip.classList.contains("lit")).length,
+        maxLevel: pipNodes.length,
+      };
+    }
+    return null;
   }
 
   function parseSkills(dialog) {
@@ -99,9 +119,13 @@
     if (rows.length === 0) throw new Error("No skill rows were found. Open the Skills window and make sure its skill lists are loaded.");
 
     const skills = rows.map((row) => {
-      const skillName = textOf(row.querySelector(".name"));
+      const skillName = textOf(row.querySelector(".name, [data-skill-name], .skill-name"));
       const levelData = skillLevel(row);
-      if (!skillName || !levelData) throw new Error("Found skill rows, but could not read each name and .pips level label; no partial export was copied.");
+      if (!skillName || !levelData) {
+        const skillKey = row.getAttribute("data-skill") || "unknown skill";
+        const missing = [!skillName && "name", !levelData && "level"].filter(Boolean).join(" and ");
+        throw new Error(`Could not read ${missing} for ${skillKey}; no partial export was copied. Keep the Skills window open and send the outerHTML of that row.`);
+      }
       return {
         skillId: skillSlug(skillName),
         gameSkillId: row.getAttribute("data-skill"),
